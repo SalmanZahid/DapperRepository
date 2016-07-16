@@ -4,10 +4,13 @@
     using Repository.DTO_Interfaces;
     using System;
     using System.Collections.Generic;
+    using System.ComponentModel.DataAnnotations;
     using System.Configuration;
     using System.Data;
     using System.Data.SqlClient;
+    using System.Diagnostics;
     using System.Linq;
+    using System.Reflection;
 
     public class BaseRepository<TModel> : IRepository<TModel>, IDisposable where TModel : class
     {
@@ -15,9 +18,7 @@
         private string _tableName, query;
 
         private string _connectionString = ConfigurationManager.ConnectionStrings["dbConnection"].ConnectionString;
-
-        private IsolationLevel isolationLevel = IsolationLevel.ReadCommitted;
-
+        private TModel model = default(TModel);
         protected IDbConnection db;
         protected IDbTransaction _transaction;
 
@@ -27,12 +28,15 @@
             set { this._connectionString = value; }
         }
 
+        public bool IsTransactionEnable { get; set; }
+
         public BaseRepository()
         {
             if (db == null)
                 db = new SqlConnection(connectionString);
 
             this._tableName = typeof(TModel).Name;
+            this.IsTransactionEnable = true;
         }
 
         public List<TModel> SelectAll()
@@ -65,14 +69,22 @@
 
         public TModel Find(int id)
         {
-            TModel model = default(TModel);
+            Type type = typeof(TModel);
 
             try
             {
                 this.OpenConnection();
-                string primaryKeyColumnName = TablePrimaryKey();
-                query = string.Format("Select * from {0} where {1} = {2}", _tableName, primaryKeyColumnName, id);
-                model = db.Query<TModel>(query).FirstOrDefault();
+
+                //string primaryKeyColumnName = TablePrimaryKey();
+                string pk = string.Empty;
+
+                foreach (var item in type.GetProperties())
+                {
+                    if (item.IsDefined(typeof(KeyAttribute)))
+                        pk = item.Name;
+                }
+                query = string.Format("Select * from {0} where {1} = {2}", _tableName, pk, id);
+                model = db.Query<TModel>(query,_transaction).FirstOrDefault();
             }
             catch (Exception ex)
             {
@@ -88,30 +100,34 @@
 
         private string TablePrimaryKey()
         {
-            return db.Query<string>("select column_name from information_schema.KEY_COLUMN_USAGE where table_name =@TableName", new { TableName = this._tableName }).FirstOrDefault();
+            return db.Query<string>("select column_name from information_schema.KEY_COLUMN_USAGE where table_name =@TableName", new { TableName = this._tableName }, _transaction).FirstOrDefault();
         }
 
         public int Insert(TModel entity)
         {
             int id = 0;
+            this.OpenConnection();
 
             try
             {
-                this.OpenConnection();
                 DynamicParameters dynamicParam = new DynamicParameters();
-                string primaryKey = TablePrimaryKey();
+                //  string primaryKey = TablePrimaryKey();
+                PropertyInfo[] properties = entity.GetType().GetProperties();
+
                 foreach (var item in entity.GetType().GetProperties())
                 {
-                    if (item.Name != primaryKey)
+                    if (!item.IsDefined(typeof(KeyAttribute)) && !item.PropertyType.IsGenericType)
                         dynamicParam.Add("@" + item.Name, item.GetValue(entity));
                 }
 
-                query = string.Format("Insert into {0}({1}) Values({2}); Select CAST(SCOPE_IDENTITY() as int)", _tableName, entity.ToClauseColumnNamesWithoutPK(primaryKey), entity.ToClauseValuesWithoutPK(primaryKey));
-                id = db.Query<int>(query, dynamicParam).FirstOrDefault();
+                query = string.Format("Insert into {0}({1}) Values({2}); Select CAST(SCOPE_IDENTITY() as int)", _tableName, entity.ToInsertQueryColumnNames(), entity.ToInsertQueryColumnValues());
+                id = db.Query<int>(query, dynamicParam, _transaction).FirstOrDefault();
+                this.Commit();
             }
             catch (Exception ex)
             {
-
+                this.RollBack();
+                throw ex;
             }
             finally
             {
@@ -135,19 +151,21 @@
 
                 foreach (var item in entity.GetType().GetProperties())
                 {
-                    if (item.Name == primaryKey)
-                        primaryKeyValue = Convert.ToInt32(item.GetValue(entity));
-
                     dynamicParam.Add("@" + item.Name, item.GetValue(entity));
                 }
 
-                query = string.Format("Update {0} set {1} where {2} = {3}", _tableName, entity.ToUpdateQuery(primaryKey), primaryKey, primaryKeyValue);
+                primaryKey = entity.GetType().GetProperties().Where(x => x.GetType() == typeof(KeyAttribute)).FirstOrDefault().Name;
+                primaryKeyValue = (int)entity.GetType().GetProperties().Where(x => x.GetType() == typeof(KeyAttribute)).FirstOrDefault().GetValue(entity);
+                query = string.Format("Update {0} set {1} where {2} = {3}", _tableName, entity.ToUpdateQuery(), primaryKey, primaryKeyValue);
                 db.Query(query, dynamicParam);
+                this.Commit();
                 successful = true;
             }
             catch (Exception ex)
             {
+                this.RollBack();
                 successful = false;
+                throw ex;
             }
             finally
             {
@@ -176,13 +194,17 @@
                     dynamicParam.Add("@" + item.Name, item.GetValue(entity));
                 }
 
-                query = string.Format("Update {0} set {1} where Id = @Id", _tableName, entity.ToUpdateQuery(primaryKey));
-                db.Query(query, dynamicParam);
+                query = string.Format("Update {0} set {1} where Id = @Id", _tableName, entity.ToUpdateQuery());
+                db.Query(query, dynamicParam, _transaction);
+                this.Commit();
                 successful = true;
+
             }
             catch (Exception ex)
             {
+                this.RollBack();
                 successful = false;
+                throw ex;
             }
             finally
             {
@@ -201,12 +223,15 @@
                 this.OpenConnection();
                 string primaryKey = TablePrimaryKey();
                 query = string.Format("Delete from {0} where {1} = {2}", _tableName, primaryKey, id);
-                db.Query(query);
+                db.Query(query, _transaction);
+                this.Commit();
                 successful = true;
             }
             catch (Exception ex)
             {
+                this.RollBack();
                 successful = false;
+                throw ex;
             }
             finally
             {
@@ -218,13 +243,15 @@
 
         protected virtual void RollBack()
         {
-            this._transaction.Rollback();
+            if (IsTransactionEnable)
+                this._transaction.Rollback();
             _transaction = null;
         }
 
         protected virtual void Commit()
         {
-            this._transaction.Commit();
+            if (IsTransactionEnable)
+                this._transaction.Commit();
             _transaction = null;
         }
 
@@ -237,6 +264,9 @@
         {
             if (db.State != ConnectionState.Open)
                 db.Open();
+
+            if (this.IsTransactionEnable)
+                _transaction = db.BeginTransaction(IsolationLevel.ReadCommitted);
         }
 
         private void CloseConnection()

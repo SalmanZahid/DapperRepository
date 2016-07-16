@@ -1,4 +1,5 @@
 ﻿using System.Collections.Generic;
+using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Reflection;
 
@@ -6,7 +7,7 @@ namespace Repository
 {
     public static class ObjectToQueryClause
     {
-        public static string ToUpdateQuery(this object Obj, string primaryKeyName = "Id")
+        public static string ToUpdateQuery(this object Obj)
         {
             string queryString = string.Empty;
             List<string> listOfProperties = new List<string>();
@@ -23,7 +24,7 @@ namespace Repository
 
                 foreach (var item in propertyInfo)
                 {
-                    if (item.Name != primaryKeyName)
+                    if (item.GetType() != typeof(KeyAttribute))
                     {
                         string propertyNameWithValue = item.Name + " = @" + item.Name;
                         listOfProperties.Add(propertyNameWithValue);
@@ -34,20 +35,20 @@ namespace Repository
             return string.Join<string>(",".ToString(), listOfProperties);
         }
 
-        public static string ToClauseColumnNamesWithoutPK(this object Obj, string primaryKeyName)
+        public static string ToInsertQueryColumnNames(this object Obj)
         {
             if (Obj == null)
                 return string.Empty;
 
-            return string.Join<string>(",", Obj.GetType().GetProperties().Where(x => x.Name != primaryKeyName).Select(x => x.Name).ToList());
+            return string.Join<string>(",", Obj.GetType().GetProperties().Where(x => !x.IsDefined(typeof(KeyAttribute)) && x.PropertyType.IsGenericType == false).Select(x => x.Name).ToList());
         }
 
-        public static string ToClauseValuesWithoutPK(this object Obj, string primaryKeyName)
+        public static string ToInsertQueryColumnValues(this object Obj)
         {
             if (Obj == null)
                 return string.Empty;
 
-            return string.Join<string>(",", Obj.GetType().GetProperties().Where(x => x.Name != primaryKeyName).Select(x => string.Concat("@", x.Name)).ToList());
+            return string.Join<string>(",", Obj.GetType().GetProperties().Where(x => !x.IsDefined(typeof(KeyAttribute)) && x.PropertyType.IsGenericType == false).Select(x => string.Concat("@", x.Name)).ToList());
         }
     }
 }
