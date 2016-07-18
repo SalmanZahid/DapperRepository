@@ -30,8 +30,9 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Dapper">
-      <HintPath>C:\Users\salma\Desktop\Dapper.dll</HintPath>
+    <Reference Include="Dapper, Version=1.1.0.0, Culture=neutral, PublicKeyToken=dfffeb5798e0be57, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\..\..\..\Desktop\Dapper.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.ComponentModel.DataAnnotations" />
@@ -49,7 +50,12 @@
     <Compile Include="ExtensionMethods\ObjectToQueryClause.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
-  <ItemGroup />
+  <ItemGroup>
+    <ProjectReference Include="..\Dapper.DataAnnotation\Dapper.DataAnnotation.csproj">
+      <Project>{da0fd3c6-2c23-4350-a308-c5758f78e897}</Project>
+      <Name>Dapper.DataAnnotation</Name>
+    </ProjectReference>
+  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.

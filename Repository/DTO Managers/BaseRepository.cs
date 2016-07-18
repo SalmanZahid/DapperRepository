@@ -1,8 +1,10 @@
 ﻿namespace Repository.DTO_Managers
 {
     using Dapper;
+    using DapperDataAnnotation;
     using Repository.DTO_Interfaces;
     using System;
+    using System.Collections;
     using System.Collections.Generic;
     using System.ComponentModel.DataAnnotations;
     using System.Configuration;
@@ -69,22 +71,64 @@
 
         public TModel Find(int id)
         {
-            Type type = typeof(TModel);
 
             try
             {
                 this.OpenConnection();
 
-                //string primaryKeyColumnName = TablePrimaryKey();
+                Type type = typeof(TModel);
+
+                PropertyInfo[] propertyInfo = type.GetProperties();
                 string pk = string.Empty;
 
-                foreach (var item in type.GetProperties())
-                {
-                    if (item.IsDefined(typeof(KeyAttribute)))
-                        pk = item.Name;
-                }
+                if (propertyInfo.Where(x => x.IsDefined(typeof(PK))).Any())
+                    pk = propertyInfo.Where(x => x.IsDefined(typeof(PK))).FirstOrDefault().Name;
+                else
+                    pk = TablePrimaryKey();
+
+                if (propertyInfo.Where(x => x.PropertyType.IsClass).Any())
+                    Debug.Write("Codnition True Found");
+
+
                 query = string.Format("Select * from {0} where {1} = {2}", _tableName, pk, id);
-                model = db.Query<TModel>(query,_transaction).FirstOrDefault();
+                model = db.Query<TModel>(query).FirstOrDefault();
+
+                foreach (PropertyInfo item in propertyInfo.Where(x => x.PropertyType.IsGenericType && x.IsDefined(typeof(ForeignTable)) && !x.IsDefined(typeof(Ignore))))
+                {
+                    ForeignTable foreignTableAttribute = item.GetCustomAttribute(typeof(ForeignTable)) as ForeignTable;
+
+                    Type childpropertyType = item.PropertyType.GetGenericArguments()[0];
+                    if (string.IsNullOrEmpty(foreignTableAttribute._columnName))
+                        continue;
+
+
+
+                    PropertyInfo[] propertyInfoOfChild = item.GetType().GetProperties();
+
+
+                    dynamic foreignKeyValue = model.GetType().GetProperty(foreignTableAttribute._columnName).GetValue(this.model);
+                    string foreignKeyTableName = item.PropertyType.GenericTypeArguments.FirstOrDefault().Name;
+
+
+
+
+                    if (propertyInfo.Where(x => x.PropertyType.IsClass).Any())
+                        Debug.Write("Codnition True Found");
+
+
+
+                    var t = typeof(SqlMapper);
+                    var genericQuery = t.GetMethods().Where(x => x.Name == "Query" && x.GetGenericArguments().Length == 1).First(); // You can cache this object.
+                    var concreteQuery = genericQuery.MakeGenericMethod(childpropertyType); // you can also keep a dictionary of these, for speed.
+                   // var _ret = (IEnumerable)concreteQuery.Invoke(null, new object[] { db });
+
+                    query = string.Format("Select * from {0} where {1} = {2}", foreignKeyTableName, foreignTableAttribute._columnName, foreignKeyValue);
+                    model.GetType().GetProperty(foreignKeyTableName).SetValue(model, (IEnumerable) db.Query(query));
+                    // possibly from a string
+
+
+
+                }
             }
             catch (Exception ex)
             {
@@ -265,8 +309,8 @@
             if (db.State != ConnectionState.Open)
                 db.Open();
 
-            if (this.IsTransactionEnable)
-                _transaction = db.BeginTransaction(IsolationLevel.ReadCommitted);
+            //if (this.IsTransactionEnable)
+            //    _transaction = db.BeginTransaction(IsolationLevel.ReadCommitted);
         }
 
         private void CloseConnection()
@@ -274,6 +318,9 @@
             if (db.State == ConnectionState.Open)
                 db.Close();
         }
+
+
+
 
 
     }
